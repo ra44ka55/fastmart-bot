@@ -604,6 +604,7 @@ async function findByInstamartUrl(ctx, itemId, originalUrl, fallbackTitle = null
   );
 
   // Step 1: Extract real product info directly from Instamart page
+  const productInfo = await getProductDetails(itemId);
   const rawProductName = productInfo?.name || fallbackTitle || `Item ${itemId}`;
   const productName = rawProductName.replace(/[*_`\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
 
