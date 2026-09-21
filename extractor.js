@@ -145,8 +145,18 @@ async function checkStoreStock(browser, store, itemId) {
     
     // domcontentloaded is 5x faster than networkidle
     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 4500 });
+    // Wait up to 2500ms for dynamic store hydration or status text
     try {
-      await page.waitForSelector('button, [role="button"], div, script[type="application/ld+json"]', { timeout: 600 });
+      await page.waitForFunction(() => {
+        const text = document.body ? (document.body.innerText || document.body.textContent || '') : '';
+        const hasButton = Array.from(document.querySelectorAll('button, [role="button"]')).some(b => {
+          const t = (b.innerText || '').trim().toLowerCase();
+          const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+          return t === 'add' || t === 'sold out' || t === 'out of stock' || aria === 'add';
+        });
+        const hasStatusText = /sold\s*out|out\s*of\s*stock|something\s*went\s*wrong|try\s*again/i.test(text);
+        return hasButton || hasStatusText;
+      }, { timeout: 2200 });
     } catch (_) {}
 
     const result = await page.evaluate(() => {
@@ -160,49 +170,47 @@ async function checkStoreStock(browser, store, itemId) {
       }
 
       const ld = document.querySelector('script[type="application/ld+json"]');
-      let availability = null;
       let price = null;
       if (ld) {
         try {
           const j = JSON.parse(ld.textContent);
-          availability = j.offers?.availability;
           price = j.offers?.price;
           if (!pageProductName && j.name) pageProductName = j.name;
         } catch (_) {}
       }
 
-      const body = document.body.innerText || '';
-      const oosPatterns = [
-        'Out of stock',
-        'Sold Out',
-        'SOLD OUT',
-        'Currently unavailable',
-        'Currently unserviceable',
-        'Coming soon',
-        'Not deliverable'
-      ];
-      const isOOS = oosPatterns.some(pat => body.includes(pat)) || (availability && availability.includes('OutOfStock'));
-      
-      // Look for active Add button in DOM
-      const hasAdd = Array.from(document.querySelectorAll('button, [role="button"], div'))
-        .some(b => {
-          const t = (b.innerText || '').trim();
-          return t === 'ADD' || t === 'Add to cart';
-        });
+      const body = document.body ? (document.body.innerText || document.body.textContent || '') : '';
 
-      // Explicit sold out button / badge
-      const hasSoldOut = Array.from(document.querySelectorAll('button, [role="button"], div, span'))
-        .some(b => {
-          const t = (b.innerText || '').trim().toLowerCase();
-          return t === 'sold out' || t === 'out of stock';
-        });
-
-      let inStock = false;
-      if (hasAdd && !hasSoldOut) {
-        inStock = true;
-      } else if (availability && availability.includes('InStock') && !hasSoldOut) {
-        inStock = true;
+      // 1. Error / Unserviceable check (Zero false positives)
+      const isUnserviceable = /something\s*went\s*wrong|our\s*best\s*minds|try\s*again|currently\s*unserviceable|not\s*deliverable/i.test(body);
+      if (isUnserviceable || body.length < 150) {
+        return { inStock: false, price, productName: pageProductName };
       }
+
+      // 2. Explicit Out of Stock / Sold Out check (Immediate disqualifier)
+      const isSoldOut = /sold\s*out|out\s*of\s*stock|currently\s*unavailable|coming\s*soon/i.test(body);
+      if (isSoldOut) {
+        return { inStock: false, price, productName: pageProductName };
+      }
+
+      // 3. Positive verification of active buy button in DOM
+      const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+      const hasAdd = buttons.some(b => {
+        const t = (b.innerText || '').trim().toLowerCase();
+        const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+        return t === 'add' || t === 'add to cart' || aria === 'add';
+      });
+
+      // 4. Fallback price extraction from body if ld is missing
+      if (!price) {
+        const priceMatch = body.match(/₹\s*([\d,]+)/);
+        if (priceMatch) {
+          price = priceMatch[1].replace(/,/g, '');
+        }
+      }
+
+      // 5. In-Stock is strictly TRUE ONLY IF: active ADD button + product identified + zero OOS markers
+      const inStock = hasAdd && !isSoldOut && !isUnserviceable && !!pageProductName;
 
       return {
         inStock: !!inStock,

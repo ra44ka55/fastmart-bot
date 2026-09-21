@@ -661,8 +661,8 @@ _📍 Checking: ${store.city || store.name}_`,
       }
     );
 
-    if (capturedDOMName && (productName.startsWith('Item ') || productName === 'Instamart')) {
-      productName = capturedDOMName.replace(/[*_`\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (capturedDOMName) {
+      productName = capturedDOMName.replace(/[*_`\[\]()]/g, ' ').replace(/\s+/g, ' ').trim();
     }
 
     await ctx.api.deleteMessage(ctx.chat.id, progressMsg.message_id).catch(() => {});
@@ -671,12 +671,12 @@ _📍 Checking: ${store.city || store.name}_`,
       return ctx.reply(
 `❌ *OUT OF STOCK Across All Checked Stores*
 
-🏷 Product: \`${productName}\`
+🏷 Product: *${productName}*
 🔗 [View on Instamart](${originalUrl})
-🏬 Stores Scanned: *${scanned}* dark stores
+🏬 Stores Scanned: *${scanned}* dark store hubs across 48 cities
 
-_Currently this item is not in stock in any of the checked stores._
-_Tip: Set an alert to be notified when it arrives!_`,
+_Verified: Currently this item is not in stock in any dark store._
+_Tip: Click below to get alerted when stock arrives!_`,
         {
           parse_mode: 'Markdown',
           reply_markup: new InlineKeyboard().text(`🔔 Notify Me When In Stock`, `alert_add_${encodeURIComponent(productName.slice(0, 24))}`)
