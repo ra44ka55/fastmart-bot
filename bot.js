@@ -846,10 +846,24 @@ setInterval(async () => {
 
 // ── Start Bot ────────────────────────────────────────────────────────────────
 console.log('📱 Mobile Inventory Radar Bot starting...');
-bot.start({
-  onStart: (info) => {
-    console.log(`✅ Bot @${info.username} is live and listening!`);
-    console.log(`   API Server: ${SERVER_URL}`);
-    console.log(`   MAX_STORES for /find: ${MAX_STORES}`);
-  }
-});
+
+function runBot() {
+  bot.start({
+    drop_pending_updates: true,
+    onStart: (info) => {
+      console.log(`✅ Bot @${info.username} is live and listening on local PC host!`);
+      console.log(`   API Server: ${SERVER_URL}`);
+      console.log(`   Stores to scan: ${STORES_DATABASE.length}`);
+    }
+  }).catch((err) => {
+    if (err.message && err.message.includes('409')) {
+      console.log('⚠️ 409 Conflict: another instance is active. Retrying in 8s...');
+      setTimeout(runBot, 8000);
+    } else {
+      console.error('Bot launch error:', err.message);
+      setTimeout(runBot, 5000);
+    }
+  });
+}
+
+runBot();
