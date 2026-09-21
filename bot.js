@@ -18,7 +18,7 @@ const { Bot, InlineKeyboard } = require('grammy');
 const fs   = require('fs');
 const path = require('path');
 const { lookupSkuAcrossStores } = require('./scraper');
-const { getProductDetails, scanStoresForProduct } = require('./extractor');
+const { getProductDetails, scanStoresForProduct, STORES_DATABASE } = require('./extractor');
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const BOT_TOKEN  = process.env.TELEGRAM_BOT_TOKEN;
@@ -620,15 +620,15 @@ _(Live updates below)_`,
   ).catch(() => {});
 
   let lastEditAt = Date.now();
-  const scanLimit = 80; // Top 80 Metro & Tier-1 Dark Stores across India (Lightning Fast on 512MB RAM)
+  const scanLimit = STORES_DATABASE.length; // Scan ALL Dark Stores across India
 
-  console.log(`[findByInstamartUrl] Starting scan for ${itemId} (${productName})...`);
+  console.log(`[findByInstamartUrl] Starting scan for ${itemId} (${productName}) across ALL ${scanLimit} stores...`);
 
   try {
     const { scanned, found } = await scanStoresForProduct(
       itemId,
       scanLimit,
-      3, // 3 workers: optimal for 0.5 CPU and 512MB RAM, zero lag/crashes
+      4, // 4 workers: fast throughput while staying well below 512MB RAM
       async (done, total, foundCount, store) => {
         if (Date.now() - lastEditAt > 3000 || done === total) {
           lastEditAt = Date.now();

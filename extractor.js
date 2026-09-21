@@ -190,9 +190,10 @@ async function checkStoreStock(browser, store, itemId) {
 /**
  * Scan all stores with lightweight concurrency pool
  */
-async function scanStoresForProduct(itemId, maxStores = 80, concurrency = 3, onProgress = () => {}) {
+async function scanStoresForProduct(itemId, maxStores = null, concurrency = 4, onProgress = () => {}) {
   const browser = await getBrowser();
-  const storesToScan = STORES_DATABASE.slice(0, maxStores);
+  const limit = maxStores || STORES_DATABASE.length;
+  const storesToScan = STORES_DATABASE.slice(0, limit);
   const foundStores = [];
   let completed = 0;
 
