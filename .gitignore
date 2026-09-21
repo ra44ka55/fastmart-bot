@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+
+# Runtime data files (will be recreated)
+bot_users.json
+bot_alerts.json
+watchlist.json
+
+# Playwright browser binaries (Railway installs these fresh)
+# Uncomment if you want to exclude them:
+# ms-playwright/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db

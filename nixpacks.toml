@@ -1,0 +1,12 @@
+# nixpacks.toml for Railway deployment with Playwright Chromium support
+[phases.setup]
+nixPkgs = ["nodejs_20", "chromium"]
+
+[phases.install]
+cmds = [
+  "npm ci || npm install",
+  "npx playwright install chromium"
+]
+
+[start]
+cmd = "node start.js"

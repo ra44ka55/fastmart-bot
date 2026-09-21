@@ -1,0 +1,23 @@
+{
+  "name": "quickcommerce-stock-tracker",
+  "version": "1.0.0",
+  "description": "Realtime Phone & Product Stock Tracker for Instamart, Blinkit & Zepto",
+  "main": "start.js",
+  "scripts": {
+    "start": "node start.js",
+    "server": "node server.js",
+    "bot": "node bot.js",
+    "scrape": "node scraper.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.1",
+    "express": "^4.22.3",
+    "grammy": "^1.30.0",
+    "isomorphic-git": "^1.42.2",
+    "playwright": "^1.47.0"
+  }
+}
