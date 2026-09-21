@@ -21,16 +21,15 @@ const { lookupSkuAcrossStores } = require('./scraper');
 const { getProductDetails, scanStoresForProduct, STORES_DATABASE } = require('./extractor');
 
 // ── Config ──────────────────────────────────────────────────────────────────
-const BOT_TOKEN  = process.env.TELEGRAM_BOT_TOKEN;
+const BOT_TOKEN  = process.env.TELEGRAM_BOT_TOKEN || '8843657270:AAFuclk8tF2HtUSW3-QIIOkwM67Ov0PtgfA';
 const SERVER_URL = process.env.SERVER_URL || 'http://localhost:3000';
 const MAX_STORES = parseInt(process.env.MAX_STORES || '30', 10);
 
-if (!BOT_TOKEN) {
-  console.error('❌ TELEGRAM_BOT_TOKEN missing in .env!');
-  process.exit(1);
-}
-
 const bot = new Bot(BOT_TOKEN);
+
+bot.catch((err) => {
+  console.error('[Grammy Error]', err.ctx?.chat?.id, err.message);
+});
 
 // ── Persistent State ─────────────────────────────────────────────────────────
 const USERS_FILE  = path.join(__dirname, 'bot_users.json');
@@ -605,8 +604,8 @@ async function findByInstamartUrl(ctx, itemId, originalUrl, fallbackTitle = null
   );
 
   // Step 1: Extract real product info directly from Instamart page
-  const productInfo = await getProductDetails(itemId);
-  const productName = productInfo?.name || fallbackTitle || `Item ${itemId}`;
+  const rawProductName = productInfo?.name || fallbackTitle || `Item ${itemId}`;
+  const productName = rawProductName.replace(/[*_`\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
 
   await ctx.api.editMessageText(ctx.chat.id, progressMsg.message_id,
 `✅ *Product Identified!*
