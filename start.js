@@ -7,7 +7,14 @@ require('dotenv').config();
 const { spawn } = require('child_process');
 const path = require('path');
 
-const dir = __dirname;
+const fs = require('fs');
+const logFile = path.join(dir, 'bot_runtime.log');
+const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+
+function writeLog(msg) {
+  process.stdout.write(msg);
+  try { logStream.write(`[${new Date().toLocaleTimeString()}] ${msg}`); } catch (_) {}
+}
 
 function launchProcess(name, file, env = {}) {
   const proc = spawn('node', ['--max-old-space-size=256', path.join(dir, file)], {
@@ -15,11 +22,11 @@ function launchProcess(name, file, env = {}) {
     stdio: 'pipe'
   });
 
-  proc.stdout.on('data', d => process.stdout.write(`[${name}] ${d}`));
-  proc.stderr.on('data', d => process.stderr.write(`[${name}] ${d}`));
+  proc.stdout.on('data', d => writeLog(`[${name}] ${d}`));
+  proc.stderr.on('data', d => writeLog(`[${name}] ${d}`));
 
   proc.on('close', (code) => {
-    console.error(`[${name}] exited with code ${code}. Restarting in 5s...`);
+    writeLog(`[${name}] exited with code ${code}. Restarting in 5s...\n`);
     setTimeout(() => launchProcess(name, file, env), 5000);
   });
 
