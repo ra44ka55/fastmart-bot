@@ -15,7 +15,7 @@ let browserInstance = null;
 
 async function getBrowser() {
   if (!browserInstance || !browserInstance.isConnected()) {
-    browserInstance = await chromium.launch({
+    const launchOpts = {
       headless: true,
       args: [
         '--no-sandbox',
@@ -23,7 +23,19 @@ async function getBrowser() {
         '--disable-dev-shm-usage',
         '--disable-gpu'
       ]
-    });
+    };
+    try {
+      browserInstance = await chromium.launch(launchOpts);
+    } catch (err) {
+      if (err.message && (err.message.includes("Executable doesn't exist") || err.message.includes('playwright install'))) {
+        console.log('[Playwright] Chromium binary missing on host. Auto-installing now...');
+        const { execSync } = require('child_process');
+        execSync('npx playwright install chromium', { stdio: 'inherit' });
+        browserInstance = await chromium.launch(launchOpts);
+      } else {
+        throw err;
+      }
+    }
   }
   return browserInstance;
 }

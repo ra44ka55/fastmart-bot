@@ -4,6 +4,8 @@
   "description": "Realtime Phone & Product Stock Tracker for Instamart, Blinkit & Zepto",
   "main": "start.js",
   "scripts": {
+    "postinstall": "npx playwright install chromium",
+    "build": "npx playwright install chromium",
     "start": "node start.js",
     "server": "node server.js",
     "bot": "node bot.js",
