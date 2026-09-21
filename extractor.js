@@ -3,7 +3,13 @@ const path = require('path');
 const fs = require('fs');
 const { ALL_LOCATIONS } = require('./locations');
 
-const STORES_DATABASE = ALL_LOCATIONS;
+let STORES_DATABASE = ALL_LOCATIONS;
+try {
+  const activePath = path.join(__dirname, 'active_dark_stores.json');
+  if (fs.existsSync(activePath)) {
+    STORES_DATABASE = JSON.parse(fs.readFileSync(activePath, 'utf8'));
+  }
+} catch (_) {}
 
 let browserInstance = null;
 
@@ -220,7 +226,7 @@ async function checkStoreStock(browser, store, itemId) {
 /**
  * Scan all stores with lightweight concurrency pool
  */
-async function scanStoresForProduct(itemId, maxStores = null, concurrency = 4, onProgress = () => {}) {
+async function scanStoresForProduct(itemId, maxStores = null, concurrency = 8, onProgress = () => {}) {
   const browser = await getBrowser();
   const limit = maxStores || STORES_DATABASE.length;
   const storesToScan = STORES_DATABASE.slice(0, limit);

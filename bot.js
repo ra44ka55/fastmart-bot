@@ -628,7 +628,7 @@ _(Live updates below)_`,
     const { scanned, found } = await scanStoresForProduct(
       itemId,
       scanLimit,
-      5, // 5 workers: lightning fast ~30s scan across all 48 Indian cities
+      8, // 8 workers on PC host: scans all 1,078 dark stores across India in ~2.5 to 3 minutes
       async (done, total, foundCount, store) => {
         if (Date.now() - lastEditAt > 3000 || done === total) {
           lastEditAt = Date.now();
