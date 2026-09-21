@@ -10,7 +10,7 @@ const path = require('path');
 const dir = __dirname;
 
 function launchProcess(name, file, env = {}) {
-  const proc = spawn('node', [path.join(dir, file)], {
+  const proc = spawn('node', ['--max-old-space-size=256', path.join(dir, file)], {
     env: { ...process.env, ...env },
     stdio: 'pipe'
   });

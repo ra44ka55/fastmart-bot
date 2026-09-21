@@ -21,7 +21,12 @@ async function getBrowser() {
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-gpu'
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--mute-audio',
+        '--no-first-run',
+        '--disable-extensions',
+        '--js-flags=--max-old-space-size=128'
       ]
     };
     try {
@@ -81,6 +86,7 @@ async function getProductDetails(itemId) {
  */
 async function checkStoreStock(browser, store, itemId) {
   let context = null;
+  let page = null;
   try {
     context = await browser.newContext({
       geolocation: { latitude: store.lat, longitude: store.lon },
@@ -176,14 +182,15 @@ async function checkStoreStock(browser, store, itemId) {
       error: err.message
     };
   } finally {
-    if (context) await context.close();
+    if (page) await page.close().catch(() => {});
+    if (context) await context.close().catch(() => {});
   }
 }
 
 /**
- * Scan all stores with high concurrency pool
+ * Scan all stores with lightweight concurrency pool
  */
-async function scanStoresForProduct(itemId, maxStores = 1038, concurrency = 25, onProgress = () => {}) {
+async function scanStoresForProduct(itemId, maxStores = 80, concurrency = 3, onProgress = () => {}) {
   const browser = await getBrowser();
   const storesToScan = STORES_DATABASE.slice(0, maxStores);
   const foundStores = [];

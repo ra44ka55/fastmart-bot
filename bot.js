@@ -620,7 +620,7 @@ _(Live updates below)_`,
   ).catch(() => {});
 
   let lastEditAt = Date.now();
-  const scanLimit = 1038; // Scan all 1,038+ Swiggy Instamart dark stores across India
+  const scanLimit = 80; // Top 80 Metro & Tier-1 Dark Stores across India (Lightning Fast on 512MB RAM)
 
   console.log(`[findByInstamartUrl] Starting scan for ${itemId} (${productName})...`);
 
@@ -628,9 +628,9 @@ _(Live updates below)_`,
     const { scanned, found } = await scanStoresForProduct(
       itemId,
       scanLimit,
-      6, // 6 workers: rock solid stable execution on Windows, no context crashes
+      3, // 3 workers: optimal for 0.5 CPU and 512MB RAM, zero lag/crashes
       async (done, total, foundCount, store) => {
-        if (Date.now() - lastEditAt > 2000 || done === total) {
+        if (Date.now() - lastEditAt > 3000 || done === total) {
           lastEditAt = Date.now();
           const percent = Math.floor((done / total) * 100);
           const barLen = 10;
