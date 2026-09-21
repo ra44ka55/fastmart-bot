@@ -675,10 +675,11 @@ _Tip: Set an alert to be notified when it arrives!_`,
 
     // Step 3: Build found stores list
     let result =
-      `📦 *Instamart Inventory Live Report*\n` +
-      `🏷 *${productName}*\n` +
-      `🔗 [View on Instamart](${originalUrl})\n` +
-      `✅ *IN STOCK* in *${found.length}* stores (${scanned} scanned)\n\n`;
+      `🎯 *DARK STORE AVAILABILITY REPORT*\n\n` +
+      `📦 Item: *${productName}*\n` +
+      `🔗 [Instamart Link](${originalUrl})\n` +
+      `✅ Ye item *${found.length}* Dark Store(s) me *AVAILABLE* mila:\n\n` +
+      `─────────────────────────\n`;
 
     // Group by City
     const byCity = {};
@@ -688,15 +689,15 @@ _Tip: Set an alert to be notified when it arrives!_`,
     });
 
     Object.entries(byCity).forEach(([city, items]) => {
-      result += `🏙 *${city}* (${items.length} store${items.length > 1 ? 's' : ''})\n`;
+      result += `📍 *City: ${city}* (${items.length} store${items.length > 1 ? 's' : ''})\n`;
       items.forEach(({ store, price }) => {
-        const maps = `https://maps.google.com/?q=${store.lat},${store.lon}`;
+        const maps = `https://www.google.com/maps/search/?api=1&query=${store.lat},${store.lon}`;
         const pStr = price ? ` ₹${price}` : '';
-        result += `   📍 [${store.name}](${maps})\n`;
-        result += `   💰 Price:${pStr}  📦 Status: *AVAILABLE / IN STOCK*\n`;
-        result += `   🛒 [Open in Instamart](${originalUrl})\n`;
+        result += `   🟢 *Dark Store:* ${store.name}\n`;
+        result += `   🗺️ *Location:* [Open Google Maps](${maps})\n`;
+        if (pStr) result += `   💰 *Price:* ${pStr}\n`;
       });
-      result += '\n';
+      result += `─────────────────────────\n`;
     });
 
     await sendLong(ctx, result);
