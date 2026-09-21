@@ -605,8 +605,11 @@ async function findByInstamartUrl(ctx, itemId, originalUrl, fallbackTitle = null
 
   // Step 1: Extract real product info directly from Instamart page
   const productInfo = await getProductDetails(itemId);
-  const rawProductName = productInfo?.name || fallbackTitle || `Item ${itemId}`;
-  const productName = rawProductName.replace(/[*_`\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+  let rawProductName = productInfo?.name || fallbackTitle || `Item ${itemId}`;
+  if (rawProductName.toLowerCase() === 'instamart' || rawProductName.includes('Online Grocery')) {
+    rawProductName = `Item ${itemId}`;
+  }
+  let productName = rawProductName.replace(/[*_`\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
 
   await ctx.api.editMessageText(ctx.chat.id, progressMsg.message_id,
 `✅ *Product Identified!*
@@ -614,23 +617,27 @@ async function findByInstamartUrl(ctx, itemId, originalUrl, fallbackTitle = null
 🏷 *${productName.slice(0, 60)}*
 ${productInfo?.brand ? `🏢 Brand: *${productInfo.brand}*\n` : ''}${productInfo?.price ? `💰 Price: *₹${productInfo.price}*\n` : ''}
 📡 *Launching Pan-India Dark Store Radar...*
-🔍 Scanning all ${STORES_DATABASE.length} dark store hubs across India...
+🔍 Scanning all ${STORES_DATABASE.length} dark store hubs across 48 cities in India...
 _(Live updates below)_`,
     { parse_mode: 'Markdown' }
   ).catch(() => {});
 
   let lastEditAt = Date.now();
-  const scanLimit = STORES_DATABASE.length; // Scan ALL 239 Dark Stores across all 48 cities in India
+  const scanLimit = STORES_DATABASE.length; // All 239 Core Dark Store Hubs across all 48 cities in India
 
   console.log(`[findByInstamartUrl] Starting scan for ${itemId} (${productName}) across ALL ${scanLimit} stores...`);
 
   try {
-    const { scanned, found } = await scanStoresForProduct(
+    const { scanned, found, productName: capturedDOMName } = await scanStoresForProduct(
       itemId,
       scanLimit,
-      8, // 8 workers on PC host: scans all 1,078 dark stores across India in ~2.5 to 3 minutes
-      async (done, total, foundCount, store) => {
-        if (Date.now() - lastEditAt > 3000 || done === total) {
+      8, // 8 workers: ~60-90 seconds lightning fast pan-India scan
+      async (done, total, foundCount, store, capturedName) => {
+        if (capturedName && (productName.startsWith('Item ') || productName === 'Instamart')) {
+          productName = capturedName.replace(/[*_`\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+        }
+
+        if (Date.now() - lastEditAt > 2500 || done === total) {
           lastEditAt = Date.now();
           const percent = Math.floor((done / total) * 100);
           const barLen = 10;
@@ -641,7 +648,7 @@ _(Live updates below)_`,
 
           await ctx.api.editMessageText(ctx.chat.id, progressMsg.message_id,
 `⚡ *Pan-India Dark Store Radar*
-🏷 *${productName.slice(0, 32)}...*
+🏷 *${productName.slice(0, 40)}...*
 
 [${bar}] *${percent}%*
 ⏳ Scanned: *${done}/${total}* stores
@@ -653,6 +660,10 @@ _📍 Checking: ${store.city || store.name}_`,
         }
       }
     );
+
+    if (capturedDOMName && (productName.startsWith('Item ') || productName === 'Instamart')) {
+      productName = capturedDOMName.replace(/[*_`\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+    }
 
     await ctx.api.deleteMessage(ctx.chat.id, progressMsg.message_id).catch(() => {});
 

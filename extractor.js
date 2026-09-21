@@ -3,13 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { ALL_LOCATIONS } = require('./locations');
 
-let STORES_DATABASE = ALL_LOCATIONS;
-try {
-  const activePath = path.join(__dirname, 'active_dark_stores.json');
-  if (fs.existsSync(activePath)) {
-    STORES_DATABASE = JSON.parse(fs.readFileSync(activePath, 'utf8'));
-  }
-} catch (_) {}
+const STORES_DATABASE = ALL_LOCATIONS; // 239 Core Dark Store Hubs across all 48 cities in India
 
 let browserInstance = null;
 
@@ -150,12 +144,21 @@ async function checkStoreStock(browser, store, itemId) {
     const targetUrl = `https://instamart.in/item/${itemId}`;
     
     // domcontentloaded is 5x faster than networkidle
-    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 9000 });
+    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 4500 });
     try {
-      await page.waitForSelector('button, [role="button"], div, script[type="application/ld+json"]', { timeout: 1000 });
+      await page.waitForSelector('button, [role="button"], div, script[type="application/ld+json"]', { timeout: 600 });
     } catch (_) {}
 
     const result = await page.evaluate(() => {
+      let pageProductName = null;
+      const h1 = document.querySelector('h1')?.innerText?.trim();
+      const itemSpan = document.querySelector('[class*="item-display-name"], [data-testid*="item"]')?.innerText?.trim();
+      if (h1 && h1.length > 3 && !h1.toLowerCase().includes('something went wrong')) {
+        pageProductName = h1;
+      } else if (itemSpan && itemSpan.length > 3) {
+        pageProductName = itemSpan;
+      }
+
       const ld = document.querySelector('script[type="application/ld+json"]');
       let availability = null;
       let price = null;
@@ -164,6 +167,7 @@ async function checkStoreStock(browser, store, itemId) {
           const j = JSON.parse(ld.textContent);
           availability = j.offers?.availability;
           price = j.offers?.price;
+          if (!pageProductName && j.name) pageProductName = j.name;
         } catch (_) {}
       }
 
@@ -202,14 +206,16 @@ async function checkStoreStock(browser, store, itemId) {
 
       return {
         inStock: !!inStock,
-        price: price
+        price: price,
+        productName: pageProductName
       };
     });
 
     return {
       store,
       inStock: result.inStock,
-      price: result.price
+      price: result.price,
+      productName: result.productName
     };
   } catch (err) {
     return {
@@ -232,6 +238,7 @@ async function scanStoresForProduct(itemId, maxStores = null, concurrency = 8, o
   const storesToScan = STORES_DATABASE.slice(0, limit);
   const foundStores = [];
   let completed = 0;
+  let capturedProductName = null;
 
   for (let i = 0; i < storesToScan.length; i += concurrency) {
     const chunk = storesToScan.slice(i, i + concurrency);
@@ -240,6 +247,9 @@ async function scanStoresForProduct(itemId, maxStores = null, concurrency = 8, o
 
     for (const res of results) {
       completed++;
+      if (res.productName && !capturedProductName) {
+        capturedProductName = res.productName;
+      }
       if (res.inStock) {
         foundStores.push(res);
       }
@@ -247,13 +257,14 @@ async function scanStoresForProduct(itemId, maxStores = null, concurrency = 8, o
     // Update progress per batch to reduce overhead
     const lastStore = chunk[chunk.length - 1] || {};
     try {
-      await onProgress(completed, storesToScan.length, foundStores.length, lastStore);
+      await onProgress(completed, storesToScan.length, foundStores.length, lastStore, capturedProductName);
     } catch (_) {}
   }
 
   return {
     scanned: completed,
-    found: foundStores
+    found: foundStores,
+    productName: capturedProductName
   };
 }
 
