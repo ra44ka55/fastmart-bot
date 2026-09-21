@@ -41,6 +41,15 @@ function saveWatchlist() {
 const { ALL_LOCATIONS } = require('./locations');
 module.exports = { ALL_LOCATIONS };
 
+app.get('/', (req, res) => {
+  res.json({
+    status: 'online',
+    service: 'FastMart Stock Tracker & Bot',
+    bot: '@fastmartxbot',
+    uptime: process.uptime()
+  });
+});
+
 app.get('/api/locations', (req, res) => {
   res.json({ locations: ALL_LOCATIONS, total: ALL_LOCATIONS.length });
 });
