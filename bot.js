@@ -89,9 +89,22 @@ async function sendLong(ctx, text) {
 }
 
 async function apiSearch(q, platform, lat, lon, force = false) {
-  const url = `${SERVER_URL}/api/search?q=${encodeURIComponent(q)}&platform=${encodeURIComponent(platform)}&lat=${lat}&lon=${lon}&force=${force}`;
-  const res  = await fetch(url);
-  return res.json();
+  const localUrl = `http://localhost:3000/api/search?q=${encodeURIComponent(q)}&platform=${encodeURIComponent(platform)}&lat=${lat}&lon=${lon}&force=${force}`;
+  const cloudUrl = `https://fastmart-bot.onrender.com/api/search?q=${encodeURIComponent(q)}&platform=${encodeURIComponent(platform)}&lat=${lat}&lon=${lon}&force=${force}`;
+
+  try {
+    const res = await fetch(localUrl, { signal: AbortSignal.timeout(1500) });
+    if (res.ok) return await res.json();
+  } catch (_) {}
+
+  try {
+    const res = await fetch(cloudUrl, { signal: AbortSignal.timeout(8000) });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.log('[apiSearch] cloud fallback failed:', err.message);
+  }
+
+  return { status: 'error', data: { products: [] } };
 }
 
 // ── /start ───────────────────────────────────────────────────────────────────
@@ -186,12 +199,21 @@ bot.command('platform', async (ctx) => sendPlatformMenu(ctx));
 bot.command('alerts', async (ctx) => showMyAlerts(ctx));
 
 // ── searchPhones ─────────────────────────────────────────────────────────────
-async function searchPhones(ctx, query) {
-  const user    = getUser(ctx.chat.id);
-  const loading = await ctx.reply(`🔍 *Scanning for "${query}"...*`, { parse_mode: 'Markdown' });
+async function searchPhones(ctx, rawQuery) {
+  let query = (rawQuery || '').trim();
+  query = query
+    .replace(/^Buy\s+/i, '')
+    .replace(/\s+Online\s+\(1 Unit\)\s+At Best Price/i, '')
+    .replace(/\s+Online\s+At Best Price/i, '');
+  if (query.includes('|')) {
+    query = query.split('|')[0].trim();
+  }
+  const cleanQuery = query.slice(0, 35);
+  const user = getUser(ctx.chat.id);
+  const loading = await ctx.reply(`🔍 *Scanning for "${cleanQuery}"...*`, { parse_mode: 'Markdown' });
 
   try {
-    const data   = await apiSearch(query, user.platform, user.lat, user.lon);
+    const data   = await apiSearch(cleanQuery, user.platform, user.lat, user.lon);
     const phones = (data.data?.products || []).filter(isActualMobilePhone);
 
     // Delete loading message
@@ -199,27 +221,29 @@ async function searchPhones(ctx, query) {
 
     if (phones.length === 0) {
       const kb = new InlineKeyboard()
-        .text(`🔔 Alert When Restocked`, `alert_add_${encodeURIComponent(query.slice(0,24))}`).row()
-        .text(`🏪 Check Nearby Stores`, `radar_${encodeURIComponent(query.slice(0,24))}`);
+        .text(`🔔 Alert When Restocked`, `alert_add_${encodeURIComponent(cleanQuery.slice(0,24))}`).row()
+        .text(`🏪 Check Nearby Stores`, `radar_${encodeURIComponent(cleanQuery.slice(0,24))}`);
       return ctx.reply(
-`❌ *OUT OF STOCK: "${query}"*
+`❌ *OUT OF STOCK: "${cleanQuery}"*
 
 🏪 Store: *${user.cityName}*
 🛒 Platform: *${user.platform}*
 
-_No matching phone found in this dark store right now._`,
+_No matching phone found in this dark store right now._
+_Tip: Paste direct Instamart link for Pan-India scan!_`,
         { parse_mode: 'Markdown', reply_markup: kb }
       );
     }
 
-    let text = `📱 *${phones.length} Phone(s) Found: "${query}"*\n`;
+    let text = `📱 *${phones.length} Phone(s) Found: "${cleanQuery}"*\n`;
     text += `📍 Store: *${user.cityName}*  |  🛒 *${user.platform}*\n\n`;
 
     phones.slice(0, 5).forEach((p, i) => {
       const status = p.available ? '🟢 IN STOCK' : '🔴 OUT OF STOCK';
       const qty    = p.inventory !== undefined ? `• Qty: *${p.inventory}*` : '';
       const price  = p.offer_price ? `₹${p.offer_price}` : (p.mrp ? `₹${p.mrp}` : 'N/A');
-      text += `*${i+1}. ${p.name}*\n`;
+      const safeName = (p.name || '').replace(/[*_`\[\]]/g, ' ');
+      text += `*${i+1}. ${safeName}*\n`;
       text += `   ${status} ${qty}\n`;
       text += `   💰 *${price}*  (MRP: ₹${p.mrp || '-'})\n`;
       if (p.deeplink) text += `   🔗 [Order Now](${p.deeplink})\n`;
@@ -227,14 +251,14 @@ _No matching phone found in this dark store right now._`,
     });
 
     const kb = new InlineKeyboard()
-      .text('🔔 Watch & Get Restock Alerts', `alert_add_${encodeURIComponent(query.slice(0,24))}`).row()
-      .text('🏪 Multi-Store Radar', `radar_${encodeURIComponent(query.slice(0,24))}`);
+      .text('🔔 Watch & Get Restock Alerts', `alert_add_${encodeURIComponent(cleanQuery.slice(0,24))}`).row()
+      .text('🏪 Multi-Store Radar', `radar_${encodeURIComponent(cleanQuery.slice(0,24))}`);
 
     await ctx.reply(text, { parse_mode: 'Markdown', disable_web_page_preview: true, reply_markup: kb });
 
   } catch (err) {
     await ctx.api.deleteMessage(ctx.chat.id, loading.message_id).catch(() => {});
-    await ctx.reply(`⚠️ Error: ${err.message}`);
+    await ctx.reply(`⚠️ Could not complete search right now. Please paste an Instamart product link instead.`);
   }
 }
 
@@ -483,11 +507,7 @@ bot.on('callback_query', async (ctx) => {
 const { ALL_LOCATIONS } = require('./server');
 
 // ── Instamart URL patterns ───────────────────────────────────────────────────
-// Supports:
-//   https://instamart.in/item/2BU8T8KIMO
-//   https://www.swiggy.com/instamart/item/2BU8T8KIMO
-//   https://swiggy.com/instamart/item-details/2BU8T8KIMO
-const INSTAMART_URL_RE = /(?:instamart\.in\/item\/|swiggy\.com\/instamart\/(?:item(?:-details)?)\/|swiggy\.com\/instamart[^?]*item_id=)([A-Z0-9a-z_-]+)/i;
+const INSTAMART_URL_RE = /(?:instamart\.in\/(?:item|item-details)\/|swiggy\.com\/instamart\/(?:item|item-details|p)(?:\/--|\/)|[?&](?:item_?id|itemId|sku)=|\/p\/--?|\/item\/)([A-Z0-9_-]{6,16})/i;
 
 /**
  * Fetch real product name from the Instamart page HTML.
@@ -748,10 +768,21 @@ bot.on('message:text', async (ctx) => {
     }
 
     if (candidateUrl) {
+      console.log(`[BOT CANDIDATE URL] ${candidateUrl}`);
+      if (/swiggy\.is|onelink\.me|bit\.ly|t\.co/i.test(candidateUrl)) {
+        try {
+          const headRes = await fetch(candidateUrl, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(4000) });
+          if (headRes.url) {
+            candidateUrl = headRes.url;
+            console.log(`[BOT RESOLVED URL] ${candidateUrl}`);
+          }
+        } catch (_) {}
+      }
+
       const m = candidateUrl.match(INSTAMART_URL_RE);
       if (m) {
         instamartUrl    = candidateUrl;
-        instamartItemId = m[1].toUpperCase();
+        instamartItemId = m[1].replace(/^--/, '').toUpperCase();
         break;
       }
     }
@@ -759,15 +790,30 @@ bot.on('message:text', async (ctx) => {
 
   // 2. Fallback: try raw text
   if (!instamartItemId) {
-    const rawMatch = text.match(INSTAMART_URL_RE);
-    if (rawMatch) {
-      instamartItemId = rawMatch[1].toUpperCase();
-      instamartUrl    = text.match(/https?:\/\/\S+/)?.[0] || text;
-      const preText = text.slice(0, text.indexOf(instamartUrl)).trim();
-      if (preText && preText.length > 5) {
-        fallbackTitle = preText;
+    let rawUrl = text.match(/https?:\/\/\S+/)?.[0];
+    if (rawUrl) {
+      if (/swiggy\.is|onelink\.me|bit\.ly|t\.co/i.test(rawUrl)) {
+        try {
+          const headRes = await fetch(rawUrl, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(4000) });
+          if (headRes.url) rawUrl = headRes.url;
+        } catch (_) {}
+      }
+      const rawMatch = rawUrl.match(INSTAMART_URL_RE);
+      if (rawMatch) {
+        instamartItemId = rawMatch[1].replace(/^--/, '').toUpperCase();
+        instamartUrl    = rawUrl;
+        const preText = text.slice(0, text.indexOf(rawUrl)).trim();
+        if (preText && preText.length > 5) {
+          fallbackTitle = preText;
+        }
       }
     }
+  }
+
+  // 3. Fallback: direct 8-12 char Item ID input
+  if (!instamartItemId && /^[A-Z0-9]{8,12}$/i.test(text.trim())) {
+    instamartItemId = text.trim().toUpperCase();
+    instamartUrl = `https://instamart.in/item/${instamartItemId}`;
   }
 
   if (fallbackTitle) {
