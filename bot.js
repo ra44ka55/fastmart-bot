@@ -594,7 +594,7 @@ async function panIndiaScanViaApi(productQuery, platform, onProgress = () => {})
  * Uses Custom Inventory Extractor (Playwright geolocation context).
  * Zero 3rd-party API reliance, 100% Free & Direct.
  */
-async function findByInstamartUrl(ctx, itemId, originalUrl) {
+async function findByInstamartUrl(ctx, itemId, originalUrl, fallbackTitle = null) {
   const progressMsg = await ctx.reply(
 `🔗 *Instamart Product Link Detected!*
 
@@ -606,21 +606,21 @@ async function findByInstamartUrl(ctx, itemId, originalUrl) {
 
   // Step 1: Extract real product info directly from Instamart page
   const productInfo = await getProductDetails(itemId);
-  const productName = productInfo?.name || `Item ${itemId}`;
+  const productName = productInfo?.name || fallbackTitle || `Item ${itemId}`;
 
   await ctx.api.editMessageText(ctx.chat.id, progressMsg.message_id,
 `✅ *Product Identified!*
 
 🏷 *${productName.slice(0, 60)}*
 ${productInfo?.brand ? `🏢 Brand: *${productInfo.brand}*\n` : ''}${productInfo?.price ? `💰 Price: *₹${productInfo.price}*\n` : ''}
-📡 *Launching Direct Inventory Extractor...*
-🔍 Scanning stores across India (no API limits)...
+📡 *Launching Pan-India Dark Store Radar...*
+🔍 Scanning all ${STORES_DATABASE.length} dark store hubs across India...
 _(Live updates below)_`,
     { parse_mode: 'Markdown' }
   ).catch(() => {});
 
   let lastEditAt = Date.now();
-  const scanLimit = STORES_DATABASE.length; // Scan ALL Dark Stores across India
+  const scanLimit = STORES_DATABASE.length; // Scan ALL 239 Dark Stores across all 48 cities in India
 
   console.log(`[findByInstamartUrl] Starting scan for ${itemId} (${productName}) across ALL ${scanLimit} stores...`);
 
@@ -628,7 +628,7 @@ _(Live updates below)_`,
     const { scanned, found } = await scanStoresForProduct(
       itemId,
       scanLimit,
-      4, // 4 workers: fast throughput while staying well below 512MB RAM
+      5, // 5 workers: lightning fast ~30s scan across all 48 Indian cities
       async (done, total, foundCount, store) => {
         if (Date.now() - lastEditAt > 3000 || done === total) {
           lastEditAt = Date.now();
@@ -724,6 +724,7 @@ bot.on('message:text', async (ctx) => {
   // ── Instamart URL detection ──────────────────────────────────────────────
   let instamartUrl = null;
   let instamartItemId = null;
+  let fallbackTitle = null;
 
   for (const entity of entities) {
     let candidateUrl = null;
@@ -732,6 +733,7 @@ bot.on('message:text', async (ctx) => {
       candidateUrl = text.slice(entity.offset, entity.offset + entity.length);
     } else if (entity.type === 'text_link') {
       candidateUrl = entity.url;
+      fallbackTitle = text.slice(entity.offset, entity.offset + entity.length);
     }
 
     if (candidateUrl) {
@@ -750,13 +752,26 @@ bot.on('message:text', async (ctx) => {
     if (rawMatch) {
       instamartItemId = rawMatch[1].toUpperCase();
       instamartUrl    = text.match(/https?:\/\/\S+/)?.[0] || text;
+      const preText = text.slice(0, text.indexOf(instamartUrl)).trim();
+      if (preText && preText.length > 5) {
+        fallbackTitle = preText;
+      }
     }
   }
 
-  console.log(`[BOT MATCH] ItemID: ${instamartItemId} | URL: ${instamartUrl}`);
+  if (fallbackTitle) {
+    fallbackTitle = fallbackTitle
+      .replace(/^Buy\s+/i, '')
+      .replace(/\s+Online\s+\(1 Unit\)\s+At Best Price/i, '')
+      .replace(/\s+Online\s+At Best Price/i, '')
+      .replace(/[\[\]]/g, '')
+      .trim();
+  }
+
+  console.log(`[BOT MATCH] ItemID: ${instamartItemId} | URL: ${instamartUrl} | Title: ${fallbackTitle}`);
 
   if (instamartItemId) {
-    return findByInstamartUrl(ctx, instamartItemId, instamartUrl || text);
+    return findByInstamartUrl(ctx, instamartItemId, instamartUrl || text, fallbackTitle);
   }
 
 

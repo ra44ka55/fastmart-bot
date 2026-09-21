@@ -3,13 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { ALL_LOCATIONS } = require('./locations');
 
-let STORES_DATABASE = ALL_LOCATIONS;
-try {
-  const allStoresPath = path.join(__dirname, 'all_stores.json');
-  if (fs.existsSync(allStoresPath)) {
-    STORES_DATABASE = JSON.parse(fs.readFileSync(allStoresPath, 'utf8'));
-  }
-} catch (_) {}
+const STORES_DATABASE = ALL_LOCATIONS;
 
 let browserInstance = null;
 
@@ -57,22 +51,56 @@ async function getProductDetails(itemId) {
         'Accept': 'text/html,application/xhtml+xml',
         'Accept-Language': 'en-IN,en;q=0.9',
       },
-      signal: AbortSignal.timeout(6000)
+      signal: AbortSignal.timeout(10000)
     });
     
-    if (!res.ok) return null;
-    const html = await res.text();
-    
-    const jsonLdMatch = html.match(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
-    if (jsonLdMatch) {
-      const data = JSON.parse(jsonLdMatch[1]);
-      return {
-        name: data.name ? data.name.replace(/&amp;/g, '&').replace(/&quot;/g, '"') : null,
-        brand: data.brand?.name || null,
-        price: data.offers?.price || null,
-        currency: data.offers?.priceCurrency || 'INR',
-        image: Array.isArray(data.image) ? data.image[0] : data.image
-      };
+    if (res.ok) {
+      const html = await res.text();
+      let name = null;
+      let brand = null;
+      let price = null;
+      let image = null;
+
+      const jsonLdMatch = html.match(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
+      if (jsonLdMatch) {
+        try {
+          const data = JSON.parse(jsonLdMatch[1]);
+          name = data.name;
+          brand = data.brand?.name || null;
+          price = data.offers?.price || null;
+          image = Array.isArray(data.image) ? data.image[0] : data.image;
+        } catch (_) {}
+      }
+
+      if (!name) {
+        const ogMatch = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["'](.*?)["']/i) ||
+                        html.match(/<meta[^>]+content=["'](.*?)["'][^>]+property=["']og:title["']/i);
+        if (ogMatch) name = ogMatch[1];
+      }
+
+      if (!name) {
+        const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+        if (titleMatch) name = titleMatch[1];
+      }
+
+      if (name) {
+        name = name
+          .replace(/&amp;/g, '&')
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .replace(/^Buy\s+/i, '')
+          .replace(/\s+Online\s+\(1 Unit\)\s+At Best Price/i, '')
+          .replace(/\s+Online\s+At Best Price/i, '')
+          .trim();
+
+        return {
+          name,
+          brand,
+          price,
+          currency: 'INR',
+          image
+        };
+      }
     }
   } catch (err) {
     console.error('[getProductDetails] error:', err.message);
@@ -117,7 +145,9 @@ async function checkStoreStock(browser, store, itemId) {
     
     // domcontentloaded is 5x faster than networkidle
     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 9000 });
-    await page.waitForTimeout(800); // 800ms minimum settle for DOM render
+    try {
+      await page.waitForSelector('button, [role="button"], div, script[type="application/ld+json"]', { timeout: 1000 });
+    } catch (_) {}
 
     const result = await page.evaluate(() => {
       const ld = document.querySelector('script[type="application/ld+json"]');
