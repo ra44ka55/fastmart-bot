@@ -30,10 +30,14 @@ console.log('🚀 Starting QuickCommerce Stock Tracker...');
 console.log('   Server  → http://localhost:' + (process.env.PORT || 3000));
 console.log('   Bot     → @' + (process.env.BOT_USERNAME || 'fastmartxbot'));
 
-// Launch API server and Telegram bot in parallel
+// Launch API server
 launchProcess('SERVER', 'server.js');
 
-// Small delay to let server bind first
-setTimeout(() => {
-  launchProcess('BOT', 'bot.js');
-}, 3000);
+// Only launch bot if NOT on Render (so local PC can host without 409 conflict)
+if (process.env.RENDER) {
+  console.log('☁️ Render Cloud active: Bot polling disabled on cloud. Local PC will host the bot.');
+} else {
+  setTimeout(() => {
+    launchProcess('BOT', 'bot.js');
+  }, 3000);
+}
