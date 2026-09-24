@@ -122,7 +122,8 @@ app.get('/api/search', async (req, res) => {
       headers: {
         'x-api-key': apiKey,
         'Accept': 'application/json'
-      }
+      },
+      signal: AbortSignal.timeout(2000)
     });
 
     const data = await response.json();

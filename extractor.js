@@ -1,11 +1,24 @@
 const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
-const { ALL_LOCATIONS } = require('./locations');
-
-const STORES_DATABASE = ALL_LOCATIONS; // 239 Core Dark Store Hubs across all 48 cities in India
+let STORES_DATABASE = [];
+try {
+  STORES_DATABASE = JSON.parse(fs.readFileSync(path.join(__dirname, 'all_stores_indexed.json'), 'utf8'));
+} catch (_) {
+  const { ALL_LOCATIONS } = require('./locations');
+  STORES_DATABASE = ALL_LOCATIONS;
+}
 
 let browserInstance = null;
+
+async function closeBrowser() {
+  if (browserInstance) {
+    try {
+      await browserInstance.close();
+    } catch (_) {}
+    browserInstance = null;
+  }
+}
 
 async function getBrowser() {
   if (!browserInstance || !browserInstance.isConnected()) {
@@ -20,7 +33,12 @@ async function getBrowser() {
         '--mute-audio',
         '--no-first-run',
         '--disable-extensions',
-        '--js-flags=--max-old-space-size=128'
+        '--renderer-process-limit=4',
+        '--disable-breakpad',
+        '--disable-component-update',
+        '--disable-domain-reliability',
+        '--disable-sync',
+        '--js-flags=--max-old-space-size=96'
       ]
     };
     try {
@@ -123,43 +141,61 @@ async function checkStoreStock(browser, store, itemId) {
       viewport: { width: 360, height: 640 }
     });
 
-    // Block all images, styles, fonts, trackers, analytics
+    // CRITICAL: Inject real Swiggy Instamart userLocation cookie to force live dark store inventory
+    await context.addCookies([
+      {
+        name: 'userLocation',
+        value: encodeURIComponent(JSON.stringify({
+          lat: store.lat,
+          lng: store.lon,
+          address: `${store.name}, ${store.city}`
+        })),
+        domain: '.instamart.in',
+        path: '/'
+      }
+    ]);
+
+    // Block heavy static assets (images, fonts, stylesheets)
     await context.route('**/*', route => {
-      const req = route.request();
-      const rt = req.resourceType();
-      const url = req.url();
+      const rt = route.request().resourceType();
+      const url = route.request().url();
       if (['image', 'media', 'font', 'stylesheet'].includes(rt) || 
-          url.includes('google-analytics') || 
-          url.includes('newrelic') || 
-          url.includes('clarity') || 
-          url.includes('doubleclick') ||
-          url.includes('facebook') ||
-          url.includes('telemetry')) {
+          url.includes('google-analytics') || url.includes('newrelic') || url.includes('clarity')) {
         return route.abort();
       }
       return route.continue();
     });
 
-    const page = await context.newPage();
+    page = await context.newPage();
     const targetUrl = `https://instamart.in/item/${itemId}`;
     
-    // domcontentloaded is 5x faster than networkidle
-    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 4500 });
-    // Wait up to 2500ms for dynamic store hydration or status text
+    // waitUntil 'commit' returns instantly (<1s) without hanging on slow assets
+    await page.goto(targetUrl, { waitUntil: 'commit', timeout: 8000 });
+    
+    // Wait up to 3500ms for dynamic store hydration or status text
     try {
       await page.waitForFunction(() => {
-        const text = document.body ? (document.body.innerText || document.body.textContent || '') : '';
-        const hasButton = Array.from(document.querySelectorAll('button, [role="button"]')).some(b => {
+        const hasH1 = !!document.querySelector('h1');
+        const hasBtn = Array.from(document.querySelectorAll('button, [role="button"]')).some(b => {
           const t = (b.innerText || '').trim().toLowerCase();
           const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-          return t === 'add' || t === 'sold out' || t === 'out of stock' || aria === 'add';
+          return t === 'add' || t === 'add to cart' || aria === 'add' || t === 'sold out' || t === 'out of stock';
         });
-        const hasStatusText = /sold\s*out|out\s*of\s*stock|something\s*went\s*wrong|try\s*again/i.test(text);
-        return hasButton || hasStatusText;
-      }, { timeout: 2200 });
+        const bodyText = document.body ? document.body.innerText : '';
+        const isErrText = /something\s*went\s*wrong|sold\s*out|out\s*of\s*stock|currently\s*unavailable|currently\s*unserviceable/i.test(bodyText);
+        return (hasH1 && hasBtn) || isErrText;
+      }, { timeout: 3500 });
     } catch (_) {}
 
     const result = await page.evaluate(() => {
+      const cleanBody = document.body ? document.body.innerText : '';
+
+      // 1. If device is unserviceable / not listed in this dark store:
+      const isSomethingWrong = /something\s*went\s*wrong|our\s*best\s*minds|currently\s*unserviceable|not\s*deliverable/i.test(cleanBody);
+      if (isSomethingWrong) {
+        return { inStock: false, price: null, productName: null };
+      }
+
       let pageProductName = null;
       const h1 = document.querySelector('h1')?.innerText?.trim();
       const itemSpan = document.querySelector('[class*="item-display-name"], [data-testid*="item"]')?.innerText?.trim();
@@ -179,38 +215,36 @@ async function checkStoreStock(browser, store, itemId) {
         } catch (_) {}
       }
 
-      const body = document.body ? (document.body.innerText || document.body.textContent || '') : '';
-
-      // 1. Error / Unserviceable check (Zero false positives)
-      const isUnserviceable = /something\s*went\s*wrong|our\s*best\s*minds|try\s*again|currently\s*unserviceable|not\s*deliverable/i.test(body);
-      if (isUnserviceable || body.length < 150) {
-        return { inStock: false, price, productName: pageProductName };
-      }
-
-      // 2. Explicit Out of Stock / Sold Out check (Immediate disqualifier)
-      const isSoldOut = /sold\s*out|out\s*of\s*stock|currently\s*unavailable|coming\s*soon/i.test(body);
-      if (isSoldOut) {
-        return { inStock: false, price, productName: pageProductName };
-      }
-
-      // 3. Positive verification of active buy button in DOM
-      const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+      // 2. Positive verification of active visible buy button in DOM
+      const buttons = Array.from(document.querySelectorAll('button, [role="button"], [class*="add-button"], [data-testid*="add-to-cart"]'));
       const hasAdd = buttons.some(b => {
+        const isVis = (b.offsetWidth > 0 || b.offsetHeight > 0 || b.getClientRects().length > 0);
         const t = (b.innerText || '').trim().toLowerCase();
         const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-        return t === 'add' || t === 'add to cart' || aria === 'add';
+        return isVis && (t === 'add' || t === 'add to cart' || aria === 'add' || aria.includes('add to cart'));
       });
 
-      // 4. Fallback price extraction from body if ld is missing
-      if (!price) {
-        const priceMatch = body.match(/₹\s*([\d,]+)/);
+      // 3. Explicit Out of Stock / Sold Out button check
+      const hasSoldOutButton = buttons.some(b => {
+        const isVis = (b.offsetWidth > 0 || b.offsetHeight > 0 || b.getClientRects().length > 0);
+        const t = (b.innerText || '').trim().toLowerCase();
+        const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+        return isVis && (t === 'sold out' || t === 'out of stock' || aria.includes('sold out'));
+      });
+
+      // 4. Text checks
+      const isSoldOutText = /sold\s*out|out\s*of\s*stock|currently\s*unavailable|coming\s*soon/i.test(cleanBody);
+
+      // 5. Fallback price extraction from clean body if ld is missing
+      if (!price && cleanBody) {
+        const priceMatch = cleanBody.match(/₹\s*([\d,]+)/);
         if (priceMatch) {
           price = priceMatch[1].replace(/,/g, '');
         }
       }
 
-      // 5. In-Stock is strictly TRUE ONLY IF: active ADD button + product identified + zero OOS markers
-      const inStock = hasAdd && !isSoldOut && !isUnserviceable && !!pageProductName;
+      // 6. In-Stock is strictly TRUE ONLY IF: active ADD button + zero OOS/error markers
+      const inStock = hasAdd && !hasSoldOutButton && !isSoldOutText && !isSomethingWrong && !!pageProductName;
 
       return {
         inStock: !!inStock,
@@ -238,22 +272,29 @@ async function checkStoreStock(browser, store, itemId) {
 }
 
 /**
- * Scan all stores with lightweight concurrency pool
+ * Scan all stores with high-throughput sliding worker pool
+ * Eliminates idle waiting barriers between batches
  */
-async function scanStoresForProduct(itemId, maxStores = null, concurrency = 8, onProgress = () => {}) {
+async function scanStoresForProduct(itemId, maxStoresOrList = null, concurrency = 4, onProgress = () => {}) {
   const browser = await getBrowser();
-  const limit = maxStores || STORES_DATABASE.length;
-  const storesToScan = STORES_DATABASE.slice(0, limit);
+  let storesToScan = [];
+  if (Array.isArray(maxStoresOrList)) {
+    storesToScan = maxStoresOrList;
+  } else {
+    const limit = maxStoresOrList || STORES_DATABASE.length;
+    storesToScan = STORES_DATABASE.slice(0, limit);
+  }
   const foundStores = [];
   let completed = 0;
   let capturedProductName = null;
+  let storeIndex = 0;
 
-  for (let i = 0; i < storesToScan.length; i += concurrency) {
-    const chunk = storesToScan.slice(i, i + concurrency);
-    const promises = chunk.map(store => checkStoreStock(browser, store, itemId));
-    const results = await Promise.all(promises);
-
-    for (const res of results) {
+  const workers = Array(Math.min(concurrency, storesToScan.length)).fill(0).map(async () => {
+    while (storeIndex < storesToScan.length) {
+      const idx = storeIndex++;
+      const store = storesToScan[idx];
+      const res = await checkStoreStock(browser, store, itemId);
+      
       completed++;
       if (res.productName && !capturedProductName) {
         capturedProductName = res.productName;
@@ -261,12 +302,17 @@ async function scanStoresForProduct(itemId, maxStores = null, concurrency = 8, o
       if (res.inStock) {
         foundStores.push(res);
       }
+
+      try {
+        await onProgress(completed, storesToScan.length, foundStores.length, store, capturedProductName, res);
+      } catch (_) {}
     }
-    // Update progress per batch to reduce overhead
-    const lastStore = chunk[chunk.length - 1] || {};
-    try {
-      await onProgress(completed, storesToScan.length, foundStores.length, lastStore, capturedProductName);
-    } catch (_) {}
+  });
+
+  try {
+    await Promise.all(workers);
+  } finally {
+    await closeBrowser();
   }
 
   return {
@@ -276,10 +322,56 @@ async function scanStoresForProduct(itemId, maxStores = null, concurrency = 8, o
   };
 }
 
+/**
+ * Fast restock checker for background alert watcher.
+ * Checks key hubs or specific city for a given itemId.
+ * Re-uses browser, closes cleanly in finally.
+ */
+async function checkItemRestock(itemId, targetCity = null) {
+  const browser = await getBrowser();
+  let storesToCheck = [];
+  
+  if (targetCity && targetCity !== 'All India Dark Stores' && targetCity !== 'All India') {
+    storesToCheck = STORES_DATABASE.filter(s => 
+      (s.city || '').toLowerCase() === targetCity.toLowerCase() ||
+      (s.state || '').toLowerCase() === targetCity.toLowerCase()
+    );
+  }
+  
+  if (!storesToCheck.length) {
+    const majorHubs = ['Bengaluru', 'Delhi', 'Mumbai', 'Hyderabad', 'Pune', 'Chennai', 'Kolkata', 'Gurugram', 'Noida', 'Ahmedabad'];
+    for (const city of majorHubs) {
+      const match = STORES_DATABASE.find(s => (s.city || '').toLowerCase() === city.toLowerCase());
+      if (match && !storesToCheck.some(st => st.name === match.name)) {
+        storesToCheck.push(match);
+      }
+    }
+  }
+  
+  if (!storesToCheck.length) storesToCheck = STORES_DATABASE.slice(0, 8);
+
+  try {
+    for (const store of storesToCheck) {
+      const res = await checkStoreStock(browser, store, itemId);
+      if (res && res.inStock) {
+        return { inStock: true, store, price: res.price, productName: res.productName };
+      }
+    }
+    return { inStock: false };
+  } catch (err) {
+    console.error(`[checkItemRestock] Error checking ${itemId}:`, err.message);
+    return { inStock: false, error: err.message };
+  } finally {
+    await closeBrowser();
+  }
+}
+
 module.exports = {
   getProductDetails,
   checkStoreStock,
   scanStoresForProduct,
+  checkItemRestock,
   getBrowser,
+  closeBrowser,
   STORES_DATABASE
 };

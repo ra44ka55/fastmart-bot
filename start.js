@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 
 const fs = require('fs');
+const dir = __dirname;
 const logFile = path.join(dir, 'bot_runtime.log');
 const logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
